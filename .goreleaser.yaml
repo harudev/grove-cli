@@ -1,0 +1,43 @@
+version: 2
+
+project_name: grove
+
+builds:
+  - main: .
+    binary: grove
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: git
+  format: "{{.Message}}"
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+# Homebrew tap은 추후 homebrew-grove 리포 생성 후 활성화
+# brews:
+#   - repository:
+#       owner: harudev
+#       name: homebrew-grove
+#     directory: Formula
+#     homepage: "https://github.com/harudev/grove-cli"
+#     description: "Jira workflow CLI for worktree management"
+#     install: |
+#       bin.install "grove"

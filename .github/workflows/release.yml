@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  # 수동 실행 - bump level 선택 가능
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump level"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+  # Release 라벨이 붙은 PR이 머지될 때
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # 수동 실행이거나, Release 라벨 PR이 머지된 경우에만 실행
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       contains(github.event.pull_request.labels.*.name, 'Release'))
+    runs-on: ${{ vars.RUNNER_2_CORES }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine bump level
+        id: bump
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "level=${{ github.event.inputs.bump }}" >> "$GITHUB_OUTPUT"
+          else
+            # PR 라벨로 bump level 결정 (기본 patch)
+            LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+            if echo "$LABELS" | grep -q "major"; then
+              echo "level=major" >> "$GITHUB_OUTPUT"
+            elif echo "$LABELS" | grep -q "minor"; then
+              echo "level=minor" >> "$GITHUB_OUTPUT"
+            else
+              echo "level=patch" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Calculate next version
+        id: version
+        run: |
+          # 최신 태그 조회 (없으면 v0.0.0 기준)
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest=$LATEST"
+
+          # v prefix 제거 후 파싱
+          VERSION="${LATEST#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          LEVEL="${{ steps.bump.outputs.level }}"
+          case "$LEVEL" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT ($LEVEL bump from $LATEST)"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.next }}" -m "Release ${{ steps.version.outputs.next }}"
+          git push origin "${{ steps.version.outputs.next }}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
